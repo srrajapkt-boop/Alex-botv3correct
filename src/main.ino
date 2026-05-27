@@ -17,7 +17,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 const char* ssid = "YOUR_WIFI_SSID";
 const char* password = "YOUR_WIFI_PASSWORD";
 WiFiUDP udp;
-const unsigned int localUdpPort = 4210; // Port listening for ROS 2 commands
+const unsigned int localUdpPort = 4210; 
 char incomingPacket[255];
 
 // --- Configuration Pins for ESP32-S3 ---
@@ -35,15 +35,18 @@ char incomingPacket[255];
 #define I2S_SPK_BCLK    19
 #define I2S_SPK_LRCK    20
 
-// Servo Pin
-#define SERVO_PIN       21
+// Dual Hand Servo Pins
+#define LEFT_SERVO_PIN  21
+#define RIGHT_SERVO_PIN 22
 
 // --- Audio Configuration ---
 #define SAMPLE_RATE     16000
 #define AUDIO_BUFFER_LEN 1024
 int16_t audioBuffer[AUDIO_BUFFER_LEN];
 
-Servo alexServo;
+// Define Left and Right Hand Servos
+Servo leftServo;
+Servo rightServo;
 
 // --- Render Expressions on OLED ---
 void drawExpression(String expression) {
@@ -108,7 +111,7 @@ void initSpeaker() {
 void setup() {
     Serial.begin(115200);
 
-    // Start I2C bus with custom pins
+    // Start I2C bus for OLED
     Wire.begin(OLED_SDA, OLED_SCL);
     if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { 
         Serial.println("OLED allocation failed");
@@ -116,7 +119,7 @@ void setup() {
     
     drawExpression("NEUTRAL");
 
-    // Network Setup
+    // Wi-Fi Configuration
     WiFi.begin(ssid, password);
     while (WiFi.status() != WL_CONNECTED) {
         delay(500);
@@ -125,19 +128,22 @@ void setup() {
     Serial.println("\nWiFi Active.");
     udp.begin(localUdpPort);
 
-    // Audio initializations
+    // Audio Initialization
     initMicrophone();
     initSpeaker();
     
-    // Set servo rest/idle posture to 0 degrees
-    alexServo.attach(SERVO_PIN);
-    alexServo.write(0); 
+    // Attach and set both hands to 0 degrees rest position
+    leftServo.attach(LEFT_SERVO_PIN);
+    leftServo.write(0); 
     
-    Serial.println("Alex Bot Engine Ready.");
+    rightServo.attach(RIGHT_SERVO_PIN);
+    rightServo.write(0);
+    
+    Serial.println("Alex Bot Engine Ready with Dual Hand Servos.");
 }
 
 void loop() {
-    // Process Network Commands from ROS 2 Node
+    // Process incoming ROS 2 wireless packets
     int packetSize = udp.parsePacket();
     if (packetSize) {
         int len = udp.read(incomingPacket, 255);
@@ -147,12 +153,18 @@ void loop() {
         
         if (command.startsWith("EXP:")) {
             drawExpression(command.substring(4));
-        } else if (command.startsWith("SRV:")) {
-            alexServo.write(command.substring(4).toInt());
+        } 
+        // Command format for Left Hand (e.g., "SRVL:90")
+        else if (command.startsWith("SRVL:")) {
+            leftServo.write(command.substring(5).toInt());
+        } 
+        // Command format for Right Hand (e.g., "SRVR:140")
+        else if (command.startsWith("SRVR:")) {
+            rightServo.write(command.substring(5).toInt());
         }
     }
 
-    // Audio Pipeline Passthrough
+    // Audio Pipeline Passthrough (Mic -> Speaker Loopback)
     size_t bytesRead = 0;
     size_t bytesWritten = 0;
     i2s_read(I2S_NUM_0, &audioBuffer, sizeof(audioBuffer), &bytesRead, 0);
@@ -160,4 +172,3 @@ void loop() {
         i2s_write(I2S_NUM_1, &audioBuffer, bytesRead, &bytesWritten, 0);
     }
 }
-
