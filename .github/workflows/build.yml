@@ -1,27 +1,29 @@
 name: Build Alex Bot Firmware
-on: [push]
+
+on: [push, pull_request]
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
 
-      - name: Setup PlatformIO
-        run: pip install platformio
+      - name: Install PlatformIO
+        run: pip install -U platformio
 
-      - name: Build Firmware
-        run: pio run -d .
+      - name: Compile Classic ESP32 Firmware
+        run: pio run -e esp32dev
 
-      - name: Upload Binary
+      - name: Upload Firmware Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: alex-bot-firmware
-          path: .pio/build/esp32s3/firmware.bin
+          name: alex-bot-classic-firmware
+          path: .pio/build/esp32dev/firmware.bin
           
