@@ -18,4 +18,10 @@ jobs:
         # This tells PlatformIO to build using the config at root, 
         # but look in src/src for the code.
         run: pio run -d .
-        
+
+      - name: Upload Binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: .pio/build/esp32s3/firmware.bin
+          
