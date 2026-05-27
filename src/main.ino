@@ -6,6 +6,7 @@
 #include <ESP32Servo.h>
 #include <WiFi.h>
 #include <WiFiUdp.h>
+#include "BluetoothA2DPSource.h"
 
 // --- Screen Settings ---
 #define SCREEN_WIDTH 128
@@ -20,35 +21,43 @@ WiFiUDP udp;
 const unsigned int localUdpPort = 4210; 
 char incomingPacket[255];
 
-// --- Configuration Pins for ESP32-S3 ---
-// OLED I2C Pins
-#define OLED_SDA        8
-#define OLED_SCL        9
+// --- Bluetooth Speaker Name ---
+const char* bluetooth_speaker_name = "YOUR_BT_SPEAKER_NAME"; 
+BluetoothA2DPSource a2dp_source;
 
-// I2S Microphone Pins (INMP441)
+// --- Classic ESP32 Dedicated Pins ---
+#define OLED_SDA        21
+#define OLED_SCL        22
+
 #define I2S_MIC_WS      15
-#define I2S_MIC_SD      16
-#define I2S_MIC_SCK     17
+#define I2S_MIC_SD      32
+#define I2S_MIC_SCK     14
 
-// I2S Speaker Pins (MAX98357A)
-#define I2S_SPK_DOUT    18
-#define I2S_SPK_BCLK    19
-#define I2S_SPK_LRCK    20
-
-// Dual Hand Servo Pins
-#define LEFT_SERVO_PIN  21
-#define RIGHT_SERVO_PIN 22
+#define LEFT_SERVO_PIN  13
+#define RIGHT_SERVO_PIN 12
 
 // --- Audio Configuration ---
 #define SAMPLE_RATE     16000
-#define AUDIO_BUFFER_LEN 1024
+#define AUDIO_BUFFER_LEN 512
 int16_t audioBuffer[AUDIO_BUFFER_LEN];
 
-// Define Left and Right Hand Servos
 Servo leftServo;
 Servo rightServo;
 
-// --- Render Expressions on OLED ---
+// --- Bluetooth Stream Data Provider ---
+int32_t get_audio_data(Channels *channels, int32_t len) {
+    size_t bytesRead = 0;
+    // Read sound directly from the I2S Microphone
+    i2s_read(I2S_NUM_0, &audioBuffer, len * sizeof(int16_t), &bytesRead, 0);
+    
+    int32_t samples = bytesRead / sizeof(int16_t);
+    for (int32_t i = 0; i < samples; i++) {
+        channels[i].left = audioBuffer[i];
+        channels[i].right = audioBuffer[i]; // Duplicate mono mic to stereo speaker
+    }
+    return samples;
+}
+
 void drawExpression(String expression) {
     display.clearDisplay();
     if (expression == "HAPPY") {
@@ -86,89 +95,50 @@ void initMicrophone() {
     i2s_set_pin(I2S_NUM_0, &mic_pins);
 }
 
-void initSpeaker() {
-    i2s_config_t spk_config = {
-        .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX),
-        .sample_rate = SAMPLE_RATE,
-        .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
-        .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT,
-        .communication_format = I2S_COMM_FORMAT_STAND_I2S,
-        .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
-        .dma_buf_count = 4,
-        .dma_buf_len = 512,
-        .use_apll = false
-    };
-    i2s_pin_config_t spk_pins = {
-        .bck_io_num = I2S_SPK_BCLK,
-        .ws_io_num = I2S_SPK_LRCK,
-        .data_out_num = I2S_SPK_DOUT,
-        .data_in_num = I2S_PIN_NO_CHANGE
-    };
-    i2s_driver_install(I2S_NUM_1, &spk_config, 0, NULL);
-    i2s_set_pin(I2S_NUM_1, &spk_pins);
-}
-
 void setup() {
     Serial.begin(115200);
 
-    // Start I2C bus for OLED
     Wire.begin(OLED_SDA, OLED_SCL);
     if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { 
-        Serial.println("OLED allocation failed");
+        Serial.println("OLED failed");
     }
-    
     drawExpression("NEUTRAL");
 
-    // Wi-Fi Configuration
+    // Network Setup
     WiFi.begin(ssid, password);
     while (WiFi.status() != WL_CONNECTED) {
         delay(500);
         Serial.print(".");
     }
-    Serial.println("\nWiFi Active.");
     udp.begin(localUdpPort);
 
-    // Audio Initialization
     initMicrophone();
-    initSpeaker();
     
-    // Attach and set both hands to 0 degrees rest position
+    // Connect to Bluetooth Speaker wirelessly
+    a2dp_source.start(bluetooth_speaker_name, get_audio_data);
+
+    // Setup Arm Servos to standard rest posture (0 degrees)
     leftServo.attach(LEFT_SERVO_PIN);
     leftServo.write(0); 
-    
     rightServo.attach(RIGHT_SERVO_PIN);
     rightServo.write(0);
-    
-    Serial.println("Alex Bot Engine Ready with Dual Hand Servos.");
 }
 
 void loop() {
-    // Process incoming ROS 2 wireless packets
+    // Read Wi-Fi packets for ROS 2 Commands
     int packetSize = udp.parsePacket();
     if (packetSize) {
         int len = udp.read(incomingPacket, 255);
         if (len > 0) incomingPacket[len] = 0;
         
         String command = String(incomingPacket);
-        
         if (command.startsWith("EXP:")) {
             drawExpression(command.substring(4));
-        } 
-        // Command format for Left Hand (e.g., "SRVL:90")
-        else if (command.startsWith("SRVL:")) {
+        } else if (command.startsWith("SRVL:")) {
             leftServo.write(command.substring(5).toInt());
-        } 
-        // Command format for Right Hand (e.g., "SRVR:140")
-        else if (command.startsWith("SRVR:")) {
+        } else if (command.startsWith("SRVR:")) {
             rightServo.write(command.substring(5).toInt());
         }
     }
-
-    // Audio Pipeline Passthrough (Mic -> Speaker Loopback)
-    size_t bytesRead = 0;
-    size_t bytesWritten = 0;
-    i2s_read(I2S_NUM_0, &audioBuffer, sizeof(audioBuffer), &bytesRead, 0);
-    if (bytesRead > 0) {
-        i2s_write(I2S_NUM_1, &audioBuffer, bytesRead, &bytesWritten, 0);
-    }
+    delay(10); // Yield to keep background Bluetooth stack stable
 }
