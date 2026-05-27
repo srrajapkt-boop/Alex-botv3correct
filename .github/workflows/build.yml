@@ -1,10 +1,12 @@
-name: Build
+name: Build Alex Bot Firmware
 on: [push]
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -14,14 +16,12 @@ jobs:
       - name: Setup PlatformIO
         run: pip install platformio
 
-      - name: Build
-        # This tells PlatformIO to build using the config at root, 
-        # but look in src/src for the code.
+      - name: Build Firmware
         run: pio run -d .
 
       - name: Upload Binary
         uses: actions/upload-artifact@v4
         with:
-          name: firmware
+          name: alex-bot-firmware
           path: .pio/build/esp32s3/firmware.bin
           
