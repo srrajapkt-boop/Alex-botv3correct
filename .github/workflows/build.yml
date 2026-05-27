@@ -15,5 +15,7 @@ jobs:
         run: pip install platformio
 
       - name: Build
-        run: pio run
+        # This tells PlatformIO to build using the config at root, 
+        # but look in src/src for the code.
+        run: pio run -d .
         
